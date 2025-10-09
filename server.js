@@ -33,6 +33,9 @@ const io = new Server(server, {
   }
 });
 
+// Trust first proxy if behind a proxy (e.g., Heroku, Nginx)
+app.set('trust proxy', 1);
+
 // Make io available to routes
 app.set('io', io);
 
@@ -60,7 +63,7 @@ app.use(express.urlencoded({ extended: true }));
 // Rate limiting
 const limiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 100, // limit each IP to 100 requests per windowMs
+  max: process.env.NODE_ENV === 'production' ? 100 : 500, // Higher for dev
   standardHeaders: true,
   legacyHeaders: false,
 });
