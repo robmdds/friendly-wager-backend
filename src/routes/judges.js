@@ -1,3 +1,5 @@
+const { query } = require('../config/database');
+const logger = require('../utils/logger');
 const express = require('express');
 const { authenticate } = require('../middleware/auth');
 const judgeRouter = express.Router();
