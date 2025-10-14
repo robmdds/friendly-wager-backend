@@ -313,59 +313,54 @@ exports.getUserProfile = async (req, res) => {
 
 exports.getAllUsers = async (req, res) => {
   try {
-    const currentUserId = req.user.id;
+    // Check if user is authenticated
+    if (!req.userId) {
+      return res.status(401).json({ error: 'Unauthorized' });
+    }
+
+    const currentUserId = req.userId;
     const { limit = 50, offset = 0 } = req.query;
 
     const limitInt = parseInt(limit);
     const offsetInt = parseInt(offset);
 
-    // Get all users except the current user
-    const { data: users, error } = await req.supabase
-      .from('users')
-      .select(`
-        id,
-        username,
-        profile_image_url,
-        followers_count:user_follows!followed_id(count),
-        following_count:user_follows!follower_id(count),
-        lifetime_points_earned,
-        total_bets:bet_participants(count)
-      `)
-      .neq('id', currentUserId) // Exclude current user
-      .order('lifetime_points_earned', { ascending: false })
-      .range(offsetInt, offsetInt + limitInt - 1);
-
-    if (error) {
-      console.error('Error fetching all users:', error);
-      return res.status(500).json({ error: 'Failed to fetch users' });
-    }
+    // Get all users except the current user with their stats
+    const result = await query(
+      `SELECT 
+        u.id,
+        u.username,
+        u.profile_image_url,
+        w.lifetime_points_earned,
+        (SELECT COUNT(*) FROM follows WHERE following_id = u.id) as followers_count,
+        (SELECT COUNT(*) FROM follows WHERE follower_id = u.id) as following_count,
+        (SELECT COUNT(*) FROM bet_participants WHERE user_id = u.id) as total_bets,
+        (SELECT COUNT(*) FROM bet_participants WHERE user_id = u.id AND payout_amount > 0) as wins
+       FROM users u
+       LEFT JOIN wallets w ON u.id = w.user_id
+       WHERE u.id != $1 AND u.deleted_at IS NULL
+       ORDER BY w.lifetime_points_earned DESC NULLS LAST
+       LIMIT $2 OFFSET $3`,
+      [currentUserId, limitInt, offsetInt]
+    );
 
     // Calculate win rate for each user
-    const usersWithStats = await Promise.all(
-      users.map(async (user) => {
-        // Get win count
-        const { count: wins } = await req.supabase
-          .from('bet_participants')
-          .select('*', { count: 'exact', head: true })
-          .eq('user_id', user.id)
-          .gt('payout_amount', 0);
+    const usersWithStats = result.rows.map(user => {
+      const totalBets = parseInt(user.total_bets) || 0;
+      const wins = parseInt(user.wins) || 0;
+      const winRate = totalBets > 0 ? Math.round((wins / totalBets) * 100) : 0;
 
-        const totalBets = user.total_bets?.[0]?.count || 0;
-        const winRate = totalBets > 0 ? ((wins || 0) / totalBets) * 100 : 0;
-
-        return {
-          id: user.id,
-          username: user.username,
-          profile_image_url: user.profile_image_url,
-          followers_count: user.followers_count?.[0]?.count || 0,
-          following_count: user.following_count?.[0]?.count || 0,
-          lifetime_points_earned: user.lifetime_points_earned || 0,
-          total_winnings: user.lifetime_points_earned || 0,
-          total_bets: totalBets,
-          win_rate: Math.round(winRate),
-        };
-      })
-    );
+      return {
+        id: user.id,
+        username: user.username,
+        profile_image_url: user.profile_image_url,
+        followers_count: parseInt(user.followers_count) || 0,
+        following_count: parseInt(user.following_count) || 0,
+        lifetime_points_earned: parseInt(user.lifetime_points_earned) || 0,
+        total_winnings: parseInt(user.lifetime_points_earned) || 0,
+        total_bets: totalBets,
+        win_rate: winRate,
+      };
+    });
 
     res.json({
       users: usersWithStats,
@@ -374,7 +369,7 @@ exports.getAllUsers = async (req, res) => {
       offset: offsetInt,
     });
   } catch (error) {
-    console.error('Error in getAllUsers:', error);
-    res.status(500).json({ error: 'Internal server error' });
+    logger.error('Get all users error:', error);
+    res.status(500).json({ error: 'Failed to get users' });
   }
 };
