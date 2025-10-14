@@ -21,6 +21,9 @@ router.get('/feed', authenticate, socialController.getFeed);
 router.get('/leaderboard/global', authenticate, socialController.getGlobalLeaderboard);
 router.get('/leaderboard/friends', authenticate, socialController.getFriendsLeaderboard);
 
+// Get all users
+router.get('/users', authenticate, socialController.getAllUsers);
+
 // Search users
 router.get('/users/search', authenticate, socialController.searchUsers);
 

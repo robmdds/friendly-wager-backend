@@ -310,3 +310,71 @@ exports.getUserProfile = async (req, res) => {
     res.status(500).json({ error: 'Failed to get user profile' });
   }
 };
+
+exports.getAllUsers = async (req, res) => {
+  try {
+    const currentUserId = req.user.id;
+    const { limit = 50, offset = 0 } = req.query;
+
+    const limitInt = parseInt(limit);
+    const offsetInt = parseInt(offset);
+
+    // Get all users except the current user
+    const { data: users, error } = await req.supabase
+      .from('users')
+      .select(`
+        id,
+        username,
+        profile_image_url,
+        followers_count:user_follows!followed_id(count),
+        following_count:user_follows!follower_id(count),
+        lifetime_points_earned,
+        total_bets:bet_participants(count)
+      `)
+      .neq('id', currentUserId) // Exclude current user
+      .order('lifetime_points_earned', { ascending: false })
+      .range(offsetInt, offsetInt + limitInt - 1);
+
+    if (error) {
+      console.error('Error fetching all users:', error);
+      return res.status(500).json({ error: 'Failed to fetch users' });
+    }
+
+    // Calculate win rate for each user
+    const usersWithStats = await Promise.all(
+      users.map(async (user) => {
+        // Get win count
+        const { count: wins } = await req.supabase
+          .from('bet_participants')
+          .select('*', { count: 'exact', head: true })
+          .eq('user_id', user.id)
+          .gt('payout_amount', 0);
+
+        const totalBets = user.total_bets?.[0]?.count || 0;
+        const winRate = totalBets > 0 ? ((wins || 0) / totalBets) * 100 : 0;
+
+        return {
+          id: user.id,
+          username: user.username,
+          profile_image_url: user.profile_image_url,
+          followers_count: user.followers_count?.[0]?.count || 0,
+          following_count: user.following_count?.[0]?.count || 0,
+          lifetime_points_earned: user.lifetime_points_earned || 0,
+          total_winnings: user.lifetime_points_earned || 0,
+          total_bets: totalBets,
+          win_rate: Math.round(winRate),
+        };
+      })
+    );
+
+    res.json({
+      users: usersWithStats,
+      total: usersWithStats.length,
+      limit: limitInt,
+      offset: offsetInt,
+    });
+  } catch (error) {
+    console.error('Error in getAllUsers:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+};
